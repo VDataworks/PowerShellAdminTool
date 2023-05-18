@@ -96,6 +96,24 @@ foreach ($Computer in $Computers) {
         }
     }
 
+# Test connection to each computer and retrieve scheduled task details
+$Results = foreach ($Computer in $Computers) {
+    Write-Progress "Checking Scheduled Task $($TaskNameToSearch) on : ..." -Status $Computer.Name -Id 1 -PercentComplete (($Counter / $TotalCounter) * 100)
+    if (Test-Connection -ComputerName $Computer.Name -Count 1 -Quiet) {
+        Write-Host "Connection successful"
+        $task = Get-ScheduledTask -TaskName $TaskNameToSearch -CimSession $Computer.Name -ErrorAction SilentlyContinue
+        if ($task) {
+            [PSCustomObject]@{
+                ComputerName = $Computer.Name
+                TaskName = $task.TaskName
+                State = $task.State
+                LastRunTime = $task.LastRunTime
+                NextRunTime = $task.NextRunTime
+            }
+        }
+    } else {
+        Write-Host "Connection failed"
+    }
     $Counter++
 }
 
