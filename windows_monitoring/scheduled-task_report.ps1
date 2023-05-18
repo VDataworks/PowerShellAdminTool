@@ -22,8 +22,10 @@ $ADFilter = "*"
 $HostEnable = "True"
 $ADSearchBase = "OU=,DC=,DC=com" ### THIS NEED TO BE MODIFY BEFORE RUN
 $TaskNameToSearch = "Stop PC" ### THIS NEED TO BE MODIFY BEFORE RUN
-$Results = @()
-$Errors = @()
+$GetResults = @()
+$SetResults = @()
+$GetErrors = @()
+$SetErrors = @()
 $OutputFileName = ""
 
 # Get all computers from AD
@@ -33,15 +35,16 @@ $Computers = Get-ADComputer -Filter {Name -like $ADFilter -and Enabled -eq $Host
 $TotalCounter = ($Computers | Measure-Object).Count
 $Counter = 1
 
-# Test connection to each computer and retrieve scheduled task details
+# Test connection to each computer
 foreach ($Computer in $Computers) {
     Write-Progress "Checking Scheduled Task $($TaskNameToSearch) on : ..." -Status $Computer.Name -Id 1 -PercentComplete (($Counter / $TotalCounter) * 100)
+
+    # Get all details of a specific scheduled task
     try {
         if (Test-Connection -ComputerName $Computer.Name -Count 1 -Quiet) {
-            Write-Host "Connection successful"
             $task = Get-ScheduledTask -TaskName $TaskNameToSearch -CimSession $Computer.Name -ErrorAction SilentlyContinue
             if ($task) {
-                $Results += [PSCustomObject]@{
+                $GetResults += [PSCustomObject]@{
                     ComputerName = $Computer.Name
                     TaskName = $task.TaskName
                     State = $task.State
@@ -58,7 +61,36 @@ foreach ($Computer in $Computers) {
         }
     }
     catch {
-        $Errors += [PSCustomObject]@{
+        $GetErrors += [PSCustomObject]@{
+            ComputerName = $Computer.Name
+            ErrorEncountered = $error[0].Exception.Message
+        }
+    }
+
+    # Edit the trigger of the task
+    try {
+        if (Test-Connection -ComputerName $Computer.Name -Count 1 -Quiet) {
+            $task = Get-ScheduledTask -TaskName $TaskNameToSearch -CimSession $Computer.Name -ErrorAction SilentlyContinue
+            if ($task) {
+                $SetResults += [PSCustomObject]@{
+                    ComputerName = $Computer.Name
+                    TaskName = $task.TaskName
+                    OldTimeTrigger = $task.Triggers.CalendarTrigger.StartBoundary
+                    OldScheduleType = "ScheduleByDay"
+                    OldDaysInterval = $task.Triggers.CalendarTrigger.ScheduleByDay.DaysInterval
+                }
+
+                $trigger = New-ScheduledTaskTrigger -Daily -At "22:00"
+                Set-ScheduledTaskTrigger -Task $task -Trigger $trigger -CimSession $computer.Name
+
+                $SetResults | Add-Member -MemberType NoteProperty -Name "NewTimeTrigger" -Value $task.Triggers.CalendarTrigger.StartBoundary
+                $SetResults | Add-Member -MemberType NoteProperty -Name "NewScheduleType" -Value "ScheduleByDay"
+                $SetResults | Add-Member -MemberType NoteProperty -Name "NewDaysInterval" -Value $task.Triggers.CalendarTrigger.ScheduleByDay.DaysInterval
+            }
+        }
+    }
+    catch {
+        $SetErrors += [PSCustomObject]@{
             ComputerName = $Computer.Name
             ErrorEncountered = $error[0].Exception.Message
         }
@@ -68,5 +100,7 @@ foreach ($Computer in $Computers) {
 }
 
 # Export results to Excel file
-$Results | Export-Excel -WorksheetName "TaskDetails" -Path "C:\$($OutputFileName).xlsx" -AutoSize -AutoFilter -BoldTopRow
-$Errors | Export-Excel -WorksheetName "ConnectionErrors" -Path "C:\$($OutputFileName).xlsx" -AutoSize -AutoFilter -BoldTopRow
+$GetResults | Export-Excel -WorksheetName "TaskDetails" -Path "C:\$($OutputFileName).xlsx" -AutoSize -AutoFilter -BoldTopRow
+$GetErrors | Export-Excel -WorksheetName "ConnectionErrors" -Path "C:\$($OutputFileName).xlsx" -AutoSize -AutoFilter -BoldTopRow
+$SetResults | Export-Excel -WorksheetName "TaskUpdate" -Path "C:\$($OutputFileName).xlsx" -AutoSize -AutoFilter -BoldTopRow
+$SetErrors | Export-Excel -WorksheetName "EditTaskErrors" -Path "C:\$($OutputFileName).xlsx" -AutoSize -AutoFilter -BoldTopRow
